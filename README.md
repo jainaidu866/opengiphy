@@ -135,15 +135,6 @@ cd frontend
 npm run build   # runs vue-tsc --noEmit && vite build
 ```
 
-## Screenshots
-
-_Add screenshots here:_
-
-- **Home / Discovery grid** — `![Home](docs/home.png)`
-- **GIF detail + embed codes** — `![Detail](docs/detail.png)`
-- **Upload** — `![Upload](docs/upload.png)`
-- **Profile** — `![Profile](docs/profile.png)`
-
 ## Notes
 
 - Dev mode uses SQLModel's `create_all()` — for production you'd add Alembic migrations.
