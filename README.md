@@ -26,6 +26,7 @@ A Giphy-style GIF sharing platform — upload, discover, search, like, and share
 - [Tailwind CSS](https://tailwindcss.com/) (dark, Giphy-inspired theme)
 - [TanStack Query](https://tanstack.com/query) for data fetching/caching
 - [Vue Router](https://router.vuejs.org/) + Axios
+- Tests: [Vitest](https://vitest.dev/) + [Vue Test Utils](https://test-utils.vuejs.org/) (jsdom)
 
 ## Project Structure
 
@@ -50,7 +51,8 @@ opengiphy/
         ├── api/client.ts  # axios instance + typed API functions
         ├── stores/auth.ts # auth composable (token + user)
         ├── router/        # routes + auth guard
-        └── views/         # Home, Login, Register, Upload, GifDetail, Profile, NotFound
+        ├── views/         # Home, Login, Register, Upload, GifDetail, Profile, NotFound
+        └── tests/         # Vitest + Vue Test Utils component tests
 ```
 
 ## Setup
@@ -98,7 +100,34 @@ npm install
 npm run dev
 ```
 
-Frontend runs at **http://localhost:5173**. The Vite dev server proxies `/api` and `/uploads` to the backend, so run both servers together.
+Frontend runs at **http://localhost:5173**. The axios client uses a same-origin
+`baseURL`, so the Vite dev server proxies the backend's API paths (`/auth`,
+`/gifs`, `/profiles`, `/uploads`) to **http://localhost:8000** — run both
+servers together.
+
+### Production / single-origin deployment
+
+The backend can also serve the built frontend itself, so the whole app runs on
+**one origin** (handy behind a single tunnel such as ngrok — no CORS or proxy
+needed):
+
+```bash
+# 1. Build the frontend
+cd frontend
+npm run build           # outputs frontend/dist/
+
+# 2. Run the backend — it mounts frontend/dist/ at "/"
+cd ../backend
+uvicorn main:app --reload
+```
+
+With `dist/` present, `main.py` mounts it at `/` (via `StaticFiles(html=True)`),
+while the API routes registered above it keep working. The whole site is then
+served from **http://localhost:8000**.
+
+> Note: deep-link hard refreshes (e.g. `/gif/5`) are served by `StaticFiles`,
+> which 404s on paths that aren't real files. In-app navigation works; a
+> catch-all `index.html` fallback would be needed for refresh-anywhere support.
 
 ## API Endpoints
 
@@ -128,12 +157,16 @@ pytest          # run all tests
 pytest -v       # verbose
 ```
 
-**Frontend** (type-check + production build):
+**Frontend**
 
 ```bash
 cd frontend
-npm run build   # runs vue-tsc --noEmit && vite build
+npm run test    # Vitest component tests (Vue Test Utils + jsdom)
+npm run build   # type-check + production build: vue-tsc --noEmit && vite build
 ```
+
+Component tests live in `src/tests/` and cover the Login, Upload, GifDetail, and
+Home views (rendering, error/empty states, like toggling, embed-copy, search).
 
 ## Notes
 
