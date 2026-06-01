@@ -14,10 +14,11 @@ export function clearToken(): void {
   localStorage.removeItem(TOKEN_KEY)
 }
 
-// Axios instance pointing at the backend. The dev server proxies /api
-// to http://localhost:8000 (with the /api prefix stripped).
+// Axios instance pointing at the backend. In production the FastAPI app
+// serves this built frontend on the same origin, so an empty baseURL sends
+// requests straight to the backend routes (/auth, /gifs, /profiles, ...).
 const client = axios.create({
-  baseURL: '/api',
+  baseURL: '',
   headers: {
     'Content-Type': 'application/json',
   },
