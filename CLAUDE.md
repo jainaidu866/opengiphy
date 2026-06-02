@@ -15,6 +15,7 @@ A Giphy-style GIF sharing platform. Solo intern project, built incrementally day
 - Vue 3 + Vite + TypeScript
 - Tailwind CSS (dark, Giphy-inspired theme)
 - TanStack Query + Vue Router + Axios
+- Client-side GIF editing in the Create Studio: gifuct-js (decode) + gifenc (encode)
 - Vitest + Vue Test Utils (jsdom) for component tests
 
 ## Layout
@@ -25,31 +26,37 @@ opengiphy/
 │   ├── main.py            # app entry, router registration, lifespan,
 │   │                      #   /uploads static mount + serves frontend/dist at "/"
 │   ├── database.py        # engine + session + create_all (dev)
-│   ├── models.py          # SQLModel tables: User, Gif, Like, Report
+│   ├── models.py          # SQLModel tables: User, Gif, Like, Collection, Report
+│   ├── constants.py       # canonical CATEGORIES list
 │   ├── auth.py            # hashing, JWT, get_current_user(+_optional)
+│   ├── seed.py            # seed real GIFs from Tenor across all categories
 │   ├── routers/
 │   │   ├── auth.py        # /auth/register, /auth/login, /auth/me
-│   │   ├── gifs.py        # upload / list / detail / delete (+ search & sort)
+│   │   ├── gifs.py        # upload / list / detail / delete / related (+ search, category & sort)
 │   │   ├── likes.py       # like toggle / like status
+│   │   ├── collections.py # save toggle / saved status / list saved GIFs
 │   │   ├── profiles.py    # public user profiles
 │   │   └── reports.py     # report a GIF
 │   ├── requirements.txt
-│   └── tests/             # test_auth, test_gifs, test_likes,
-│                          #   test_profiles, test_reports (36 tests)
+│   └── tests/             # test_auth, test_gifs, test_likes, test_collections,
+│                          #   test_profiles, test_reports (51 tests)
 └── frontend/
     └── src/
-        ├── api/client.ts  # axios instance (same-origin baseURL) + typed API fns
-        ├── stores/auth.ts # auth composable (token + user)
-        ├── router/        # routes + auth guard
-        ├── views/         # Home, Login, Register, Upload, GifDetail, Profile, NotFound
-        └── tests/         # Vitest component tests (12 tests)
+        ├── api/client.ts    # axios instance (same-origin baseURL) + typed API fns
+        ├── lib/gifStudio.ts # client-side GIF decode/composite/encode (Create Studio)
+        ├── stores/          # auth (token+user) + draft (Studio→Upload handoff)
+        ├── router/          # routes + auth guard
+        ├── views/           # Home, Login, Register, Create, Upload, GifDetail,
+        │                    #   Categories, Category, Collections, Profile, NotFound
+        └── tests/           # Vitest component tests (20 tests)
 ```
 
 ## Data model
 
 - **User**: id, email (unique), username (unique), hashed_password, created_at
-- **Gif**: id, user_id (FK→users), title, description, tags (JSON), file_path, view_count, created_at
+- **Gif**: id, user_id (FK→users), title, description, tags (JSON), category (optional, indexed), file_path, view_count, created_at
 - **Like**: user_id + gif_id (composite PK), created_at
+- **Collection**: user_id + gif_id (composite PK), created_at — a user's "saved" set
 - **Report**: id, gif_id (FK→gifs), reporter_id (FK→users), reason, created_at; unique (gif_id, reporter_id)
 
 ## Rules / conventions
@@ -73,14 +80,15 @@ Backend (run from `backend/`):
 
 ```bash
 uvicorn main:app --reload      # dev server at http://127.0.0.1:8000 (docs at /docs)
-pytest                         # run tests (36)
+pytest                         # run tests (51)
+python seed.py                 # seed real demo GIFs from Tenor (needs network)
 ```
 
 Frontend (run from `frontend/`):
 
 ```bash
-npm run dev                    # Vite dev server at http://localhost:5173 (proxies /auth, /gifs, /profiles, /uploads → :8000)
-npm run test                   # Vitest component tests (12)
+npm run dev                    # Vite dev server at http://localhost:5173 (proxies /auth, /gifs, /profiles, /collections, /uploads → :8000)
+npm run test                   # Vitest component tests (20)
 npm run build                  # type-check + production build → frontend/dist/
 ```
 

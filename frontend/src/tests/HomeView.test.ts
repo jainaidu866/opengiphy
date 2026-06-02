@@ -88,6 +88,44 @@ describe('HomeView', () => {
     expect(wrapper.text()).toContain('Upload a GIF')
   })
 
+  it('requests the next page when the scroll sentinel intersects', async () => {
+    // Capture the IntersectionObserver callback so we can trigger it manually.
+    let trigger: (() => void) | undefined
+    class CapturingObserver {
+      constructor(cb: (entries: { isIntersecting: boolean }[]) => void) {
+        trigger = () => cb([{ isIntersecting: true }])
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+      takeRecords() {
+        return []
+      }
+    }
+    vi.stubGlobal('IntersectionObserver', CapturingObserver)
+
+    // First page returns a full page (PAGE_SIZE=20) so hasNextPage is true.
+    const firstPage = Array.from({ length: 20 }, (_, i) => makeGif(i + 1, `Gif ${i + 1}`))
+    vi.mocked(fetchGifs).mockImplementation(async (page?: number) =>
+      page === 2 ? [makeGif(99, 'Page Two Gif')] : firstPage,
+    )
+
+    const { wrapper } = await mountHome()
+    expect(wrapper.findAll('img')).toHaveLength(20)
+
+    // Fire the sentinel; the second page should be requested and appended.
+    trigger?.()
+    await flushPromises()
+    await flushPromises()
+
+    expect(
+      vi.mocked(fetchGifs).mock.calls.some((args: unknown[]) => args[0] === 2),
+    ).toBe(true)
+    expect(wrapper.text()).toContain('Page Two Gif')
+
+    vi.unstubAllGlobals()
+  })
+
   it('triggers a filtered query when the search input changes', async () => {
     vi.mocked(fetchGifs).mockImplementation(
       async (_page?: number, _limit?: number, search?: string) =>

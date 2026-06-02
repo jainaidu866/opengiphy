@@ -1,16 +1,21 @@
 # OpenGIPHY
 
-A Giphy-style GIF sharing platform — upload, discover, search, like, and share animated GIFs. Built as an incremental full-stack project with a FastAPI backend and a Vue 3 frontend.
+A Giphy-style GIF sharing platform — upload, **create**, discover, search, like, save, and share animated GIFs. Built as an incremental full-stack project with a FastAPI backend and a Vue 3 frontend, served from a single origin in production.
 
 ## Features
 
 - 🔐 **Auth** — register / login with JWT, protected routes
-- ⬆️ **Upload** — drag-and-drop `.gif` upload with live preview, title, description, and tags
-- 🔍 **Discover** — responsive masonry grid, full-text search (title / description / tags), **New** and **Trending** sorting
+- ⬆️ **Upload** — drag-and-drop `.gif` upload with live preview, title, description, tags, and an optional category
+- 🎨 **Create Studio** — a Giphy-style, fully client-side GIF editor: pick a GIF/sticker source, then add **animated captions** (multiple text layers, fonts, colours, bounce/shake/rainbow/wave/pulse), **stickers/emoji** (tabbed picker + favourites), **filters**, **crop & resize** (Original / Landscape / Portrait / Custom W×H, Fill/Fit), and **trim** (filmstrip with start/end frames + duration). Layers are draggable on the preview, can be duplicated/deleted, and the result is re-encoded into a brand-new GIF you can download or publish.
+- 🔍 **Discover** — responsive masonry grid with **infinite scroll**, full-text search (title / description / tags), and **New** / **Trending** sorting
+- 🗂️ **Categories** — tag uploads with one of a fixed set of categories and browse a dedicated page per category
 - ❤️ **Likes** — toggle likes with optimistic UI; real like counts everywhere
+- 🔖 **Collections** — save / un-save GIFs to a personal collection and view them at `/collections`
+- 🧩 **Related GIFs** — tag-overlap recommendations on each GIF detail page
 - 👤 **Profiles** — public user pages listing a user's uploads
-- 🔗 **Embed** — copy-ready HTML / Markdown / direct-URL snippets per GIF
+- 🔗 **Share & Embed** — one-click copy of the GIF page link, plus copy-ready HTML / Markdown / direct-URL embed snippets and a direct **Download** button
 - ⚐ **Reporting** — report inappropriate GIFs (one report per user per GIF)
+- 🌱 **Seeding** — a script that pulls 100+ **real** animated GIFs across every category from Tenor's public API for instant demo data
 
 ## Tech Stack
 
@@ -23,9 +28,10 @@ A Giphy-style GIF sharing platform — upload, discover, search, like, and share
 
 **Frontend**
 - [Vue 3](https://vuejs.org/) + [Vite](https://vitejs.dev/) + TypeScript
-- [Tailwind CSS](https://tailwindcss.com/) (dark, Giphy-inspired theme)
-- [TanStack Query](https://tanstack.com/query) for data fetching/caching
+- [Tailwind CSS](https://tailwindcss.com/) (dark, Giphy-inspired theme, animated gradient accents)
+- [TanStack Query](https://tanstack.com/query) for data fetching/caching (incl. `useInfiniteQuery`)
 - [Vue Router](https://router.vuejs.org/) + Axios
+- Client-side GIF processing: [`gifuct-js`](https://github.com/matt-way/gifuct-js) (decode) + [`gifenc`](https://github.com/mattdesl/gifenc) (encode) — no server round-trip
 - Tests: [Vitest](https://vitest.dev/) + [Vue Test Utils](https://test-utils.vuejs.org/) (jsdom)
 
 ## Project Structure
@@ -33,27 +39,42 @@ A Giphy-style GIF sharing platform — upload, discover, search, like, and share
 ```
 opengiphy/
 ├── backend/
-│   ├── main.py            # app entry, router registration, static mount
+│   ├── main.py            # app entry, router registration, /uploads + dist static mount
 │   ├── database.py        # engine + session + create_all (dev)
-│   ├── models.py          # SQLModel tables: User, Gif, Like, Report
+│   ├── models.py          # SQLModel tables: User, Gif, Like, Collection, Report
+│   ├── constants.py       # canonical CATEGORIES list
 │   ├── auth.py            # hashing, JWT, get_current_user(+_optional)
+│   ├── seed.py            # seed real GIFs from Tenor across all categories
 │   ├── routers/
 │   │   ├── auth.py        # register / login / me
-│   │   ├── gifs.py        # upload / list / detail / delete (+ search & sort)
+│   │   ├── gifs.py        # upload / list / detail / delete / related (+ search, category & sort)
 │   │   ├── likes.py       # like toggle / like status
+│   │   ├── collections.py # save toggle / saved status / list saved GIFs
 │   │   ├── profiles.py    # public user profiles
 │   │   └── reports.py     # report a GIF
 │   ├── requirements.txt
 │   ├── uploads/           # stored GIF files (git-ignored)
-│   └── tests/             # pytest suite
+│   └── tests/             # pytest suite (51 tests)
 └── frontend/
     └── src/
-        ├── api/client.ts  # axios instance + typed API functions
-        ├── stores/auth.ts # auth composable (token + user)
-        ├── router/        # routes + auth guard
-        ├── views/         # Home, Login, Register, Upload, GifDetail, Profile, NotFound
-        └── tests/         # Vitest + Vue Test Utils component tests
+        ├── api/client.ts    # axios instance + typed API functions + categories list
+        ├── lib/gifStudio.ts # client-side GIF decode/composite/encode engine (Create Studio)
+        ├── stores/
+        │   ├── auth.ts      # auth composable (token + user)
+        │   └── draft.ts     # hands a Studio-created GIF to the Upload form
+        ├── router/          # routes + auth guard
+        ├── views/           # Home, Login, Register, Create, Upload, GifDetail,
+        │                    #   Categories, Category, Collections, Profile, NotFound
+        └── tests/           # Vitest + Vue Test Utils component tests (20 tests)
 ```
+
+## Data Model
+
+- **User**: id, email (unique), username (unique), hashed_password, created_at
+- **Gif**: id, user_id (FK→users), title, description, tags (JSON), **category** (optional, indexed), file_path, view_count, created_at
+- **Like**: user_id + gif_id (composite PK), created_at
+- **Collection**: user_id + gif_id (composite PK), created_at — a user's "saved" set
+- **Report**: id, gif_id (FK→gifs), reporter_id (FK→users), reason, created_at; unique (gif_id, reporter_id)
 
 ## Setup
 
@@ -88,9 +109,17 @@ cp .env.example .env
 
 # 5. Run the server (tables auto-create on startup)
 uvicorn main:app --reload
+
+# 6. (Optional) seed real demo GIFs across every category
+python seed.py
 ```
 
 Backend runs at **http://localhost:8000** — interactive docs at **http://localhost:8000/docs**.
+
+> **Seeding:** `seed.py` downloads real animated GIFs from Tenor's public API into
+> `backend/uploads/` and creates demo users + GIFs (with categories, tags, likes and
+> collections) so the app has rich data out of the box. It needs network access and
+> is intentionally **not** part of `requirements.txt`.
 
 ### Frontend
 
@@ -102,8 +131,8 @@ npm run dev
 
 Frontend runs at **http://localhost:5173**. The axios client uses a same-origin
 `baseURL`, so the Vite dev server proxies the backend's API paths (`/auth`,
-`/gifs`, `/profiles`, `/uploads`) to **http://localhost:8000** — run both
-servers together.
+`/gifs`, `/profiles`, `/collections`, `/uploads`) to **http://localhost:8000** —
+run both servers together.
 
 ### Production / single-origin deployment
 
@@ -136,16 +165,24 @@ served from **http://localhost:8000**.
 | POST | `/auth/register` | — | Register (email, username, password) |
 | POST | `/auth/login` | — | Log in, returns JWT access token |
 | GET | `/auth/me` | ✅ | Current user info |
-| POST | `/gifs/upload` | ✅ | Upload a `.gif` (multipart) |
-| GET | `/gifs/` | — | List GIFs. Params: `page`, `limit`, `search`, `sort` (`new`\|`trending`) |
+| POST | `/gifs/upload` | ✅ | Upload a `.gif` (multipart, optional `category`) |
+| GET | `/gifs/` | — | List GIFs. Params: `page`, `limit`, `search`, `category`, `sort` (`new`\|`trending`) |
 | GET | `/gifs/{id}` | — | GIF detail (increments view count) |
+| GET | `/gifs/{id}/related` | — | Related GIFs ranked by shared tags (`limit`) |
 | DELETE | `/gifs/{id}` | ✅ | Delete own GIF (owner only) |
 | POST | `/gifs/{id}/like` | ✅ | Toggle like → `{liked, like_count}` |
 | GET | `/gifs/{id}/likes` | optional | `{like_count, liked_by_me}` |
+| POST | `/gifs/{id}/save` | ✅ | Toggle save to collection → `{saved}` |
+| GET | `/gifs/{id}/saved` | optional | `{saved}` for the current viewer |
+| GET | `/collections` | ✅ | Current user's saved GIFs (paginated) |
 | POST | `/gifs/{id}/report` | ✅ | Report a GIF `{reason}` (min 10 chars) |
 | GET | `/profiles/{username}` | — | User profile + their paginated GIFs |
 | GET | `/health` | — | Health check |
 | GET | `/uploads/{filename}` | — | Static GIF files |
+
+**Categories** are a fixed set, defined once in `backend/constants.py` and mirrored
+in `frontend/src/api/client.ts`:
+`funny, reactions, sports, animals, food, music, gaming, anime, memes`.
 
 ## Running Tests
 
@@ -153,7 +190,7 @@ served from **http://localhost:8000**.
 
 ```bash
 cd backend
-pytest          # run all tests
+pytest          # run all tests (51)
 pytest -v       # verbose
 ```
 
@@ -161,15 +198,19 @@ pytest -v       # verbose
 
 ```bash
 cd frontend
-npm run test    # Vitest component tests (Vue Test Utils + jsdom)
+npm run test    # Vitest component tests (20) — Vue Test Utils + jsdom
 npm run build   # type-check + production build: vue-tsc --noEmit && vite build
 ```
 
-Component tests live in `src/tests/` and cover the Login, Upload, GifDetail, and
-Home views (rendering, error/empty states, like toggling, embed-copy, search).
+Component tests live in `src/tests/` and cover the Login, Upload, Home,
+GifDetail, Category, and Collections views (rendering, error/empty states, like
+toggling, save toggling, embed-copy, search, category filtering).
 
 ## Notes
 
-- Dev mode uses SQLModel's `create_all()` — for production you'd add Alembic migrations.
+- Dev mode uses SQLModel's `create_all()` — for production you'd add Alembic migrations. Features that added columns/tables (category, collections) pick up automatically on a fresh DB; an existing local DB may need a reset.
+- The Create Studio runs **entirely in the browser** — GIFs are decoded, composited and re-encoded client-side, then handed to the normal upload flow.
+- Per-viewer state (`liked_by_me`, `saved`) is resolved per-GIF; the list endpoint doesn't embed it, so grid cards learn it on interaction — acceptable for now.
 - GIF files are stored on the local filesystem under `backend/uploads/`. A production deploy would use object storage (S3/GCS) and a CDN.
+- A permissive CORS policy (`allow_origins=["*"]`) and Vite `allowedHosts: true` were enabled for remote demo access — **tighten both before any real deployment**.
 - Set a strong `SECRET_KEY` via environment variables in any real deployment.

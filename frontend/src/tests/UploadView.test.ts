@@ -8,7 +8,10 @@ const { uploadGifMock, pushMock } = vi.hoisted(() => ({
   uploadGifMock: vi.fn(),
   pushMock: vi.fn(),
 }))
-vi.mock('@/api/client', () => ({ uploadGif: uploadGifMock }))
+vi.mock('@/api/client', () => ({
+  uploadGif: uploadGifMock,
+  categories: ['funny', 'animals', 'food'],
+}))
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: pushMock }) }))
 
 function setFiles(input: HTMLInputElement, files: File[]) {

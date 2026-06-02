@@ -1,17 +1,33 @@
 <script setup lang="ts">
 import { isAxiosError } from 'axios'
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
-import { uploadGif } from '@/api/client'
+import { categories, uploadGif } from '@/api/client'
+import { useDraft } from '@/stores/draft'
 
 const router = useRouter()
+const { takeDraft } = useDraft()
+
+// If the user arrived here from the Create studio, prefill the form with the
+// freshly-baked GIF so they just add a title/tags and publish.
+const fromStudio = ref(false)
+onMounted(() => {
+  const { file, meta } = takeDraft()
+  if (file) {
+    fromStudio.value = true
+    setFile(file)
+    if (meta.title) title.value = meta.title
+    if (meta.category) category.value = meta.category
+  }
+})
 
 const file = ref<File | null>(null)
 const previewUrl = ref<string | null>(null)
 const title = ref('')
 const description = ref('')
 const tagsInput = ref('')
+const category = ref('')
 
 const isDragging = ref(false)
 const uploading = ref(false)
@@ -77,6 +93,9 @@ async function onSubmit() {
   formData.append('title', title.value.trim())
   formData.append('description', description.value.trim())
   formData.append('tags', JSON.stringify(tags))
+  if (category.value) {
+    formData.append('category', category.value)
+  }
 
   try {
     const gif = await uploadGif(formData, (percent) => {
@@ -102,6 +121,13 @@ onBeforeUnmount(() => {
   <div class="mx-auto max-w-2xl">
     <h1 class="text-3xl font-bold text-white">Upload a GIF</h1>
     <p class="mt-1 text-gray-400">Share your favorite animated moment.</p>
+
+    <p
+      v-if="fromStudio"
+      class="mt-4 rounded-lg border border-giphy-green/40 bg-giphy-green/10 px-4 py-3 text-sm text-giphy-green"
+    >
+      ✨ Your creation from the GIF Studio is ready — add a title and publish it!
+    </p>
 
     <form class="mt-8 space-y-6" @submit.prevent="onSubmit">
       <!-- Drop zone / preview -->
@@ -210,6 +236,21 @@ onBeforeUnmount(() => {
             #{{ tag }}
           </span>
         </div>
+      </div>
+
+      <div>
+        <label
+          for="category"
+          class="mb-1 block text-sm font-medium text-gray-300"
+        >
+          Category
+        </label>
+        <select id="category" v-model="category" class="input-field">
+          <option value="">No category</option>
+          <option v-for="c in categories" :key="c" :value="c">
+            {{ c.charAt(0).toUpperCase() + c.slice(1) }}
+          </option>
+        </select>
       </div>
 
       <!-- Progress -->

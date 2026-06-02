@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { useAuth } from '@/stores/auth'
@@ -9,6 +10,15 @@ const router = useRouter()
 function handleLogout() {
   logout()
   router.push('/')
+}
+
+// Giphy-style "Create" dropdown (Create / Upload).
+const showCreateMenu = ref(false)
+function toggleCreateMenu() {
+  showCreateMenu.value = !showCreateMenu.value
+}
+function closeCreateMenu() {
+  showCreateMenu.value = false
 }
 </script>
 
@@ -22,20 +32,76 @@ function handleLogout() {
       >
         <RouterLink
           to="/"
-          class="bg-gradient-to-r from-giphy-purple via-giphy-pink to-giphy-blue bg-clip-text text-2xl font-extrabold tracking-tight text-transparent"
+          class="text-gradient-animated text-2xl font-extrabold tracking-tight"
         >
           OpenGIPHY
         </RouterLink>
 
         <div class="flex items-center gap-2 sm:gap-3">
+          <RouterLink
+            to="/categories"
+            class="nav-link hidden sm:inline-block"
+            active-class="nav-link-active"
+          >
+            Categories
+          </RouterLink>
+
           <template v-if="isLoggedIn">
             <RouterLink
-              to="/upload"
+              to="/collections"
               class="nav-link hidden sm:inline-block"
               active-class="nav-link-active"
             >
-              Upload
+              Collections
             </RouterLink>
+            <!-- Create dropdown (Giphy-style: Create / Upload) -->
+            <div class="relative">
+              <button
+                type="button"
+                class="flex items-center gap-1 rounded-full bg-gradient-to-r from-giphy-green to-giphy-blue px-4 py-1.5 text-sm font-bold text-white shadow transition hover:opacity-90"
+                @click="toggleCreateMenu"
+              >
+                <span class="text-base leading-none">+</span> Create
+                <span class="text-[10px] leading-none">▾</span>
+              </button>
+
+              <!-- Click-away backdrop -->
+              <div
+                v-if="showCreateMenu"
+                class="fixed inset-0 z-20"
+                @click="closeCreateMenu"
+              />
+
+              <!-- Menu -->
+              <div
+                v-if="showCreateMenu"
+                class="absolute right-0 z-30 mt-2 w-48 overflow-hidden rounded-xl border border-ink-700 bg-ink-800 shadow-xl"
+              >
+                <RouterLink
+                  to="/create"
+                  class="flex flex-col gap-0.5 px-4 py-3 transition hover:bg-ink-700"
+                  @click="closeCreateMenu"
+                >
+                  <span class="text-sm font-semibold text-white">
+                    🎨 Create
+                  </span>
+                  <span class="text-xs text-gray-400">
+                    Caption &amp; animate a GIF
+                  </span>
+                </RouterLink>
+                <div class="h-px bg-ink-700" />
+                <RouterLink
+                  to="/upload"
+                  class="flex flex-col gap-0.5 px-4 py-3 transition hover:bg-ink-700"
+                  @click="closeCreateMenu"
+                >
+                  <span class="text-sm font-semibold text-white">
+                    ⬆️ Upload
+                  </span>
+                  <span class="text-xs text-gray-400">Upload your own GIF</span>
+                </RouterLink>
+              </div>
+            </div>
             <RouterLink
               :to="`/profile/${user?.username ?? ''}`"
               class="text-sm font-semibold text-giphy-green hover:underline"

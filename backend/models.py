@@ -23,6 +23,7 @@ class Gif(SQLModel, table=True):
     title: str
     description: Optional[str] = None
     tags: List[str] = Field(default_factory=list, sa_column=Column(JSON))
+    category: Optional[str] = Field(default=None, index=True)
     file_path: str
     view_count: int = Field(default=0)
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -30,6 +31,14 @@ class Gif(SQLModel, table=True):
 
 class Like(SQLModel, table=True):
     __tablename__ = "likes"
+
+    user_id: int = Field(foreign_key="users.id", primary_key=True)
+    gif_id: int = Field(foreign_key="gifs.id", primary_key=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Collection(SQLModel, table=True):
+    __tablename__ = "collections"
 
     user_id: int = Field(foreign_key="users.id", primary_key=True)
     gif_id: int = Field(foreign_key="gifs.id", primary_key=True)

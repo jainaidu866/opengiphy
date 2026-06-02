@@ -18,6 +18,7 @@ from sqlalchemy import Text, cast, func, or_
 from sqlmodel import Session, select
 
 from auth import get_current_user
+from constants import CATEGORIES
 from database import get_session
 from models import Gif, Like, User
 
@@ -34,6 +35,7 @@ class GifResponse(BaseModel):
     title: str
     description: Optional[str] = None
     tags: List[str] = []
+    category: Optional[str] = None
     file_path: str
     url: str
     view_count: int
@@ -70,6 +72,7 @@ def _serialize(gif: Gif, username: str, like_count: int = 0) -> GifResponse:
         title=gif.title,
         description=gif.description,
         tags=gif.tags or [],
+        category=gif.category,
         file_path=gif.file_path,
         url=f"/uploads/{filename}",
         view_count=gif.view_count,
@@ -88,6 +91,7 @@ def upload_gif(
     title: str = Form(...),
     description: Optional[str] = Form(None),
     tags: Optional[str] = Form(None),
+    category: Optional[str] = Form(None),
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
@@ -101,6 +105,14 @@ def upload_gif(
             detail="Only .gif files are allowed",
         )
 
+    # Category is optional, but if provided it must be one of the fixed set.
+    category = (category or "").strip() or None
+    if category is not None and category not in CATEGORIES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid category. Must be one of: {', '.join(CATEGORIES)}",
+        )
+
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     unique_name = f"{uuid.uuid4().hex}.gif"
     disk_path = os.path.join(UPLOAD_DIR, unique_name)
@@ -112,6 +124,7 @@ def upload_gif(
         title=title,
         description=description,
         tags=_parse_tags(tags),
+        category=category,
         file_path=disk_path.replace("\\", "/"),
     )
     session.add(gif)
@@ -125,6 +138,7 @@ def list_gifs(
     page: int = 1,
     limit: int = 20,
     search: Optional[str] = None,
+    category: Optional[str] = None,
     sort: str = "new",
     session: Session = Depends(get_session),
 ):
@@ -135,6 +149,8 @@ def list_gifs(
     offset = (page - 1) * limit
 
     query = select(Gif)
+    if category and category.strip():
+        query = query.where(Gif.category == category.strip())
     if search and search.strip():
         pattern = f"%{search.strip()}%"
         query = query.where(
@@ -192,6 +208,52 @@ def get_gif(gif_id: int, session: Session = Depends(get_session)):
     uploader = session.get(User, gif.user_id)
     username = uploader.username if uploader else "unknown"
     return _serialize(gif, username, like_count=count_likes(session, gif.id))
+
+
+@router.get("/{gif_id}/related", response_model=List[GifResponse])
+def related_gifs(
+    gif_id: int,
+    limit: int = 6,
+    session: Session = Depends(get_session),
+):
+    gif = session.get(Gif, gif_id)
+    if gif is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Gif not found"
+        )
+
+    if limit < 1:
+        limit = 6
+
+    tags = gif.tags or []
+    if not tags:
+        return []
+
+    # Broad candidate filter: any other GIF whose tag-text mentions one of our
+    # tags (portable JSON-as-text match across SQLite/Postgres). Exact overlap
+    # is computed in Python below for accurate ranking.
+    conditions = [cast(Gif.tags, Text).ilike(f"%{tag}%") for tag in tags]
+    query = select(Gif).where(Gif.id != gif_id).where(or_(*conditions))
+    candidates = session.exec(query).all()
+
+    our_tags = {t.lower() for t in tags}
+    scored: List[tuple[int, Gif]] = []
+    for cand in candidates:
+        shared = len({t.lower() for t in (cand.tags or [])} & our_tags)
+        if shared > 0:
+            scored.append((shared, cand))
+
+    # Most shared tags first; tie-break by recency (newest first).
+    scored.sort(key=lambda pair: (pair[0], pair[1].created_at), reverse=True)
+
+    results: List[GifResponse] = []
+    for _shared, cand in scored[:limit]:
+        uploader = session.get(User, cand.user_id)
+        username = uploader.username if uploader else "unknown"
+        results.append(
+            _serialize(cand, username, like_count=count_likes(session, cand.id))
+        )
+    return results
 
 
 @router.delete("/{gif_id}")

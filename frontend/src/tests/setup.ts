@@ -34,3 +34,22 @@ Object.defineProperty(globalThis, 'localStorage', {
   configurable: true,
   writable: true,
 })
+
+// jsdom has no IntersectionObserver; provide a no-op default so components
+// that observe a scroll sentinel (e.g. HomeView infinite scroll) can mount.
+// Individual tests may override this to capture/trigger the callback.
+class IntersectionObserverStub {
+  constructor(_cb: IntersectionObserverCallback) {}
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+  takeRecords(): [] {
+    return []
+  }
+}
+
+Object.defineProperty(globalThis, 'IntersectionObserver', {
+  value: IntersectionObserverStub,
+  configurable: true,
+  writable: true,
+})

@@ -44,3 +44,31 @@
 .animate-fade-in {
   animation: fadeInUp 0.4s ease both;
 }
+
+/* Animated gradient text used for the logo and big headings. */
+@keyframes gradientShift {
+  to {
+    background-position: 300% center;
+  }
+}
+
+.text-gradient-animated {
+  background-image: linear-gradient(
+    90deg,
+    #9933ff,
+    #ff6666,
+    #00ccff,
+    #00ff99,
+    #9933ff
+  );
+  background-size: 300% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: gradientShift 6s linear infinite;
+}
+
+/* Subtle lift used on GIF cards across the app. */
+.card-hover {
+  @apply transition duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-giphy-purple/20;
+}

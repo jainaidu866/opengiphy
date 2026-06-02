@@ -1,9 +1,16 @@
 <script setup lang="ts">
-import { useQuery } from '@tanstack/vue-query'
-import { computed, reactive, ref, watch } from 'vue'
+import { useInfiniteQuery } from '@tanstack/vue-query'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { fetchGifs, toggleLike, type Gif, type SortMode } from '@/api/client'
+import {
+  fetchGifs,
+  toggleLike,
+  toggleSave,
+  type Gif,
+  type SortMode,
+} from '@/api/client'
+import { useClipboard } from '@/composables/useClipboard'
 import { useAuth } from '@/stores/auth'
 
 const PAGE_SIZE = 20
@@ -12,9 +19,17 @@ const route = useRoute()
 const router = useRouter()
 const { isLoggedIn } = useAuth()
 
+// Dismissible "Start Creating" banner (logged-in only). Persisted in localStorage.
+const BANNER_KEY = 'hideBanner'
+const bannerDismissed = ref(localStorage.getItem(BANNER_KEY) === 'true')
+const showBanner = computed(() => isLoggedIn.value && !bannerDismissed.value)
+function dismissBanner() {
+  bannerDismissed.value = true
+  localStorage.setItem(BANNER_KEY, 'true')
+}
+
 const initialSearch = (route.query.search as string) || ''
 
-const page = ref(1)
 const searchInput = ref(initialSearch)
 const debouncedSearch = ref(initialSearch)
 const sort = ref<SortMode>('new')
@@ -25,39 +40,58 @@ watch(searchInput, (value) => {
   clearTimeout(debounceTimer)
   debounceTimer = setTimeout(() => {
     debouncedSearch.value = value
-    page.value = 1 // reset to first page on a new search
   }, 300)
 })
 
 function setSort(mode: SortMode) {
   if (sort.value === mode) return
   sort.value = mode
-  page.value = 1
 }
 
-const queryKey = computed(() => [
-  'gifs',
-  page.value,
-  debouncedSearch.value,
-  sort.value,
-])
+// Changing search/sort builds a new query key, which resets the infinite
+// query back to page 1 automatically.
+const queryKey = computed(() => ['gifs', debouncedSearch.value, sort.value])
 
-const { data, isLoading, isFetching, isError } = useQuery({
+const {
+  data,
+  isLoading,
+  isFetching,
+  isFetchingNextPage,
+  isError,
+  hasNextPage,
+  fetchNextPage,
+} = useInfiniteQuery({
   queryKey,
-  queryFn: () =>
-    fetchGifs(page.value, PAGE_SIZE, debouncedSearch.value, sort.value),
-  placeholderData: (prev) => prev,
+  queryFn: ({ pageParam }) =>
+    fetchGifs(pageParam, PAGE_SIZE, debouncedSearch.value, sort.value),
+  initialPageParam: 1,
+  getNextPageParam: (lastPage, allPages) =>
+    lastPage.length === PAGE_SIZE ? allPages.length + 1 : undefined,
 })
 
-const gifs = computed(() => data.value ?? [])
-const hasNextPage = computed(() => gifs.value.length === PAGE_SIZE)
+// Flatten the paged results into a single list for the grid.
+const gifs = computed(() => (data.value?.pages ?? []).flat())
 
-function nextPage() {
-  if (hasNextPage.value) page.value += 1
-}
-function prevPage() {
-  if (page.value > 1) page.value -= 1
-}
+// IntersectionObserver sentinel: load the next page when it scrolls into view.
+const sentinel = ref<HTMLElement | null>(null)
+let observer: IntersectionObserver | undefined
+
+watch(sentinel, (el) => {
+  observer?.disconnect()
+  if (!el) return
+  observer = new IntersectionObserver((entries) => {
+    if (
+      entries[0]?.isIntersecting &&
+      hasNextPage.value &&
+      !isFetchingNextPage.value
+    ) {
+      fetchNextPage()
+    }
+  })
+  observer.observe(el)
+})
+
+onBeforeUnmount(() => observer?.disconnect())
 
 // Per-card like overrides applied on top of the fetched like_count.
 const likeState = reactive<Record<number, { liked: boolean; count: number }>>(
@@ -69,6 +103,40 @@ function likeCount(gif: Gif): number {
 }
 function isLiked(gif: Gif): boolean {
   return likeState[gif.id]?.liked ?? false
+}
+
+// Share: copy a card's GIF page URL; track which card last copied.
+const { copy } = useClipboard()
+const sharedId = ref<number | null>(null)
+let shareTimer: ReturnType<typeof setTimeout> | undefined
+
+async function handleShare(gif: Gif) {
+  const ok = await copy(`${window.location.origin}/gif/${gif.id}`)
+  if (ok) {
+    sharedId.value = gif.id
+    clearTimeout(shareTimer)
+    shareTimer = setTimeout(() => (sharedId.value = null), 2000)
+  }
+}
+
+// Per-card save (bookmark) state, toggled optimistically.
+const savedState = reactive<Record<number, boolean>>({})
+function isSaved(gif: Gif): boolean {
+  return savedState[gif.id] ?? false
+}
+async function handleCardSave(gif: Gif) {
+  if (!isLoggedIn.value) {
+    router.push('/login')
+    return
+  }
+  const prev = savedState[gif.id] ?? false
+  savedState[gif.id] = !prev // optimistic
+  try {
+    const res = await toggleSave(gif.id)
+    savedState[gif.id] = res.saved
+  } catch {
+    savedState[gif.id] = prev // revert on failure
+  }
 }
 
 async function handleCardLike(gif: Gif) {
@@ -109,6 +177,35 @@ async function handleCardLike(gif: Gif) {
           class="input-field !py-3 !pl-11 text-base"
         />
       </div>
+    </div>
+
+    <!-- Start Creating CTA banner (logged-in, dismissible) -->
+    <div
+      v-if="showBanner"
+      class="relative mb-8 flex flex-col items-center justify-between gap-4 overflow-hidden rounded-2xl bg-gradient-to-r from-giphy-purple via-giphy-pink to-giphy-blue p-6 sm:flex-row"
+    >
+      <div>
+        <p class="text-xl font-bold text-white">
+          🎬 Share your GIFs with the world
+        </p>
+        <p class="mt-1 text-sm text-white/80">
+          Upload your favorite animated moments in seconds.
+        </p>
+      </div>
+      <RouterLink
+        to="/upload"
+        class="shrink-0 rounded-full bg-white px-6 py-2 font-bold text-ink-900 shadow transition hover:bg-white/90"
+      >
+        Create
+      </RouterLink>
+      <button
+        type="button"
+        class="absolute right-2 top-2 text-white/70 transition hover:text-white"
+        title="Dismiss"
+        @click="dismissBanner"
+      >
+        ✕
+      </button>
     </div>
 
     <!-- New / Trending tabs -->
@@ -182,7 +279,7 @@ async function handleCardLike(gif: Gif) {
     <div
       v-else
       class="columns-1 gap-4 sm:columns-2 lg:columns-3 xl:columns-4"
-      :class="{ 'opacity-60': isFetching }"
+      :class="{ 'opacity-60': isFetching && !isFetchingNextPage }"
     >
       <RouterLink
         v-for="gif in gifs"
@@ -197,6 +294,27 @@ async function handleCardLike(gif: Gif) {
             loading="lazy"
             class="w-full bg-ink-900 transition duration-300 group-hover:scale-[1.03]"
           />
+          <!-- Share + Save buttons (top-right on hover) -->
+          <div
+            class="absolute right-2 top-2 flex gap-1 opacity-0 transition group-hover:opacity-100"
+          >
+            <button
+              type="button"
+              class="rounded-full bg-black/60 px-2 py-1 text-xs font-medium text-white backdrop-blur transition hover:bg-black/80"
+              :title="isSaved(gif) ? 'Saved' : 'Save to collection'"
+              @click.stop.prevent="handleCardSave(gif)"
+            >
+              {{ isSaved(gif) ? '🔖' : '🏷️' }}
+            </button>
+            <button
+              type="button"
+              class="rounded-full bg-black/60 px-2 py-1 text-xs font-medium text-white backdrop-blur transition hover:bg-black/80"
+              :title="sharedId === gif.id ? 'Link copied!' : 'Copy link'"
+              @click.stop.prevent="handleShare(gif)"
+            >
+              {{ sharedId === gif.id ? 'Copied!' : '🔗' }}
+            </button>
+          </div>
           <!-- Title overlay on hover -->
           <div
             class="pointer-events-none absolute inset-x-0 bottom-0 translate-y-2 bg-gradient-to-t from-black/80 to-transparent p-3 opacity-0 transition duration-300 group-hover:translate-y-0 group-hover:opacity-100"
@@ -233,28 +351,26 @@ async function handleCardLike(gif: Gif) {
       </RouterLink>
     </div>
 
-    <!-- Pagination -->
-    <div
-      v-if="!isLoading && gifs.length > 0"
-      class="mt-10 flex items-center justify-center gap-4"
-    >
-      <button
-        type="button"
-        class="rounded-lg border border-ink-600 px-4 py-2 text-sm font-medium text-gray-300 transition hover:border-giphy-purple hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-        :disabled="page === 1"
-        @click="prevPage"
+    <!-- Infinite-scroll sentinel + status -->
+    <div v-if="!isLoading && gifs.length > 0" class="mt-10 text-center">
+      <!-- Sentinel: observed to trigger loading the next page -->
+      <div ref="sentinel" class="h-px w-full" />
+
+      <div
+        v-if="isFetchingNextPage"
+        class="flex items-center justify-center gap-2 py-4 text-sm text-gray-400"
       >
-        ← Prev
-      </button>
-      <span class="text-sm text-gray-400">Page {{ page }}</span>
-      <button
-        type="button"
-        class="rounded-lg border border-ink-600 px-4 py-2 text-sm font-medium text-gray-300 transition hover:border-giphy-purple hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-        :disabled="!hasNextPage"
-        @click="nextPage"
+        <span
+          class="inline-block h-4 w-4 animate-spin rounded-full border-2 border-giphy-purple border-t-transparent"
+        />
+        Loading more…
+      </div>
+      <p
+        v-else-if="!hasNextPage"
+        class="py-4 text-sm text-gray-500"
       >
-        Next →
-      </button>
+        🎉 You've reached the end
+      </p>
     </div>
   </section>
 </template>

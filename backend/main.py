@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from database import create_db_and_tables
-from routers import auth, gifs, likes, profiles, reports
+from routers import auth, collections, gifs, likes, profiles, reports
 
 
 @asynccontextmanager
@@ -34,6 +34,7 @@ app.include_router(gifs.router)
 app.include_router(likes.router)
 app.include_router(profiles.router)
 app.include_router(reports.router)
+app.include_router(collections.router)
 
 
 @app.get("/health", tags=["health"])

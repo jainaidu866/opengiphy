@@ -23,9 +23,31 @@ const routes: RouteRecordRaw[] = [
     meta: { guestOnly: true },
   },
   {
+    path: '/create',
+    name: 'create',
+    component: () => import('@/views/CreateView.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
     path: '/upload',
     name: 'upload',
     component: () => import('@/views/UploadView.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/categories',
+    name: 'categories',
+    component: () => import('@/views/CategoriesView.vue'),
+  },
+  {
+    path: '/category/:name',
+    name: 'category',
+    component: () => import('@/views/CategoryView.vue'),
+  },
+  {
+    path: '/collections',
+    name: 'collections',
+    component: () => import('@/views/CollectionsView.vue'),
     meta: { requiresAuth: true },
   },
   {

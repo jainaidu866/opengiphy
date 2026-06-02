@@ -60,6 +60,7 @@ export interface Gif {
   title: string
   description: string | null
   tags: string[]
+  category: string | null
   file_path: string
   url: string
   view_count: number
@@ -70,15 +71,34 @@ export interface Gif {
 
 export type SortMode = 'new' | 'trending'
 
+// Fixed set of categories — must mirror backend/constants.py CATEGORIES.
+export const categories = [
+  'funny',
+  'reactions',
+  'sports',
+  'animals',
+  'food',
+  'music',
+  'gaming',
+  'anime',
+  'memes',
+] as const
+
+export type Category = (typeof categories)[number]
+
 export async function fetchGifs(
   page = 1,
   limit = 20,
   search?: string,
   sort: SortMode = 'new',
+  category?: string,
 ): Promise<Gif[]> {
   const params: Record<string, string | number> = { page, limit, sort }
   if (search && search.trim()) {
     params.search = search.trim()
+  }
+  if (category && category.trim()) {
+    params.category = category.trim()
   }
   const { data } = await client.get<Gif[]>('/gifs/', { params })
   return data
@@ -86,6 +106,16 @@ export async function fetchGifs(
 
 export async function fetchGif(id: number | string): Promise<Gif> {
   const { data } = await client.get<Gif>(`/gifs/${id}`)
+  return data
+}
+
+export async function fetchRelated(
+  id: number | string,
+  limit = 6,
+): Promise<Gif[]> {
+  const { data } = await client.get<Gif[]>(`/gifs/${id}/related`, {
+    params: { limit },
+  })
   return data
 }
 
@@ -127,6 +157,38 @@ export async function toggleLike(
   id: number | string,
 ): Promise<ToggleLikeResult> {
   const { data } = await client.post<ToggleLikeResult>(`/gifs/${id}/like`)
+  return data
+}
+
+// ---------------------------------------------------------------------------
+// Collections (saved GIFs)
+// ---------------------------------------------------------------------------
+
+export interface SavedStatus {
+  saved: boolean
+}
+
+export async function toggleSave(
+  id: number | string,
+): Promise<SavedStatus> {
+  const { data } = await client.post<SavedStatus>(`/gifs/${id}/save`)
+  return data
+}
+
+export async function fetchSavedStatus(
+  id: number | string,
+): Promise<SavedStatus> {
+  const { data } = await client.get<SavedStatus>(`/gifs/${id}/saved`)
+  return data
+}
+
+export async function fetchCollection(
+  page = 1,
+  limit = 20,
+): Promise<Gif[]> {
+  const { data } = await client.get<Gif[]>('/collections', {
+    params: { page, limit },
+  })
   return data
 }
 

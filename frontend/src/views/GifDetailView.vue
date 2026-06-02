@@ -4,7 +4,16 @@ import { isAxiosError } from 'axios'
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { fetchGif, fetchLikes, reportGif, toggleLike } from '@/api/client'
+import {
+  fetchGif,
+  fetchLikes,
+  fetchRelated,
+  fetchSavedStatus,
+  reportGif,
+  toggleLike,
+  toggleSave,
+} from '@/api/client'
+import { useClipboard } from '@/composables/useClipboard'
 import { useAuth } from '@/stores/auth'
 
 const route = useRoute()
@@ -56,6 +65,13 @@ async function handleLike() {
   }
 }
 
+// Related GIFs (by shared tags). Keyed by gif id so it refetches on navigation.
+const { data: related } = useQuery({
+  queryKey: computed(() => ['related', gifId.value]),
+  queryFn: () => fetchRelated(gifId.value),
+})
+const relatedGifs = computed(() => related.value ?? [])
+
 const absoluteUrl = computed(() =>
   gif.value ? `${window.location.origin}${gif.value.url}` : '',
 )
@@ -80,14 +96,44 @@ const embedCode = computed(() => {
   }
 })
 
-const copied = ref(false)
-async function copyCode() {
+const { copied, copy: copyToClipboard } = useClipboard(1500)
+function copyCode() {
+  copyToClipboard(embedCode.value)
+}
+
+// Share: copy this GIF's page URL to the clipboard.
+const { copied: shareCopied, copy: copyShare } = useClipboard()
+function shareGif() {
+  copyShare(window.location.href)
+}
+
+// Save (bookmark) to the user's collection. Only fetch status when logged in.
+const { data: savedStatus } = useQuery({
+  queryKey: computed(() => ['saved', gifId.value]),
+  queryFn: () => fetchSavedStatus(gifId.value),
+  enabled: isLoggedIn,
+})
+const saved = ref(false)
+watch(
+  savedStatus,
+  (value) => {
+    if (value) saved.value = value.saved
+  },
+  { immediate: true },
+)
+
+async function handleSave() {
+  if (!isLoggedIn.value) {
+    router.push({ name: 'login', query: { redirect: route.fullPath } })
+    return
+  }
+  const prev = saved.value
+  saved.value = !prev // optimistic
   try {
-    await navigator.clipboard.writeText(embedCode.value)
-    copied.value = true
-    setTimeout(() => (copied.value = false), 1500)
+    const res = await toggleSave(gifId.value)
+    saved.value = res.saved
   } catch {
-    copied.value = false
+    saved.value = prev // revert on failure
   }
 }
 
@@ -102,6 +148,16 @@ function formatDate(iso: string): string {
 const likeLabel = computed(
   () => `${likeCount.value} ${likeCount.value === 1 ? 'like' : 'likes'}`,
 )
+
+// Info + embed panels are collapsed by default (revealed from the sidebar).
+const showInfo = ref(false)
+const showEmbed = ref(false)
+const downloadName = computed(() => {
+  const base =
+    gif.value?.title?.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() ||
+    'opengiphy'
+  return `${base}.gif`
+})
 
 // True only for a logged-in user viewing someone else's GIF.
 const isOwnGif = computed(
@@ -150,7 +206,7 @@ async function submitReport() {
 </script>
 
 <template>
-  <div class="mx-auto max-w-3xl">
+  <div class="mx-auto max-w-5xl">
     <div v-if="isLoading" class="py-24 text-center text-gray-400">
       Loading…
     </div>
@@ -174,115 +230,267 @@ async function submitReport() {
         ← Back to home
       </RouterLink>
 
-      <!-- GIF preview -->
-      <div
-        class="overflow-hidden rounded-2xl border border-ink-700 bg-ink-800 p-3"
-      >
-        <img
-          :src="gif.url"
-          :alt="gif.title"
-          class="mx-auto max-h-[70vh] rounded-lg"
-        />
-      </div>
-
-      <!-- Report (subtle, only for logged-in non-owners) -->
-      <div v-if="canReport" class="mt-2 text-right">
-        <button
-          type="button"
-          class="text-xs text-gray-500 transition hover:text-giphy-pink"
-          @click="openReport"
-        >
-          ⚐ Report this GIF
-        </button>
-      </div>
-
-      <!-- Metadata -->
-      <div class="mt-6">
-        <div class="flex items-start justify-between gap-4">
-          <h1 class="text-3xl font-bold text-white">{{ gif.title }}</h1>
-          <button
-            type="button"
-            class="flex shrink-0 items-center gap-2 rounded-lg border px-4 py-2 font-semibold transition"
-            :class="
-              likedByMe
-                ? 'border-giphy-pink bg-giphy-pink/10 text-giphy-pink'
-                : 'border-ink-600 text-gray-300 hover:border-giphy-pink hover:text-giphy-pink'
-            "
-            @click="handleLike"
+      <div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_280px]">
+        <!-- ============ LEFT: preview + details ============ -->
+        <div class="min-w-0">
+          <!-- GIF preview -->
+          <div
+            class="overflow-hidden rounded-2xl border border-ink-700 bg-ink-800 p-3"
           >
-            {{ likedByMe ? '♥' : '♡' }} {{ likeCount }}
-          </button>
-        </div>
+            <img
+              :src="gif.url"
+              :alt="gif.title"
+              class="mx-auto max-h-[70vh] rounded-lg"
+            />
+          </div>
 
-        <p v-if="gif.description" class="mt-3 text-gray-300">
-          {{ gif.description }}
-        </p>
+          <!-- Title -->
+          <h1 class="mt-6 text-3xl font-extrabold leading-tight text-white">
+            {{ gif.title }}
+          </h1>
 
-        <!-- Tags -->
-        <div v-if="gif.tags.length" class="mt-4 flex flex-wrap gap-2">
-          <RouterLink
-            v-for="tag in gif.tags"
-            :key="tag"
-            :to="{ path: '/', query: { search: tag } }"
-            class="rounded-full bg-ink-700 px-3 py-1 text-sm text-giphy-blue transition hover:bg-ink-600"
-          >
-            #{{ tag }}
-          </RouterLink>
-        </div>
+          <p v-if="gif.description" class="mt-2 text-gray-300">
+            {{ gif.description }}
+          </p>
 
-        <div
-          class="mt-5 flex flex-wrap items-center gap-x-6 gap-y-1 text-sm text-gray-400"
-        >
-          <span>
-            by
+          <!-- Tags -->
+          <div v-if="gif.tags.length" class="mt-4 flex flex-wrap gap-2">
             <RouterLink
-              :to="`/profile/${gif.uploader_username}`"
-              class="font-semibold text-giphy-green hover:underline"
+              v-for="tag in gif.tags"
+              :key="tag"
+              :to="{ path: '/', query: { search: tag } }"
+              class="rounded-full bg-ink-700 px-3 py-1 text-sm font-medium text-giphy-blue transition hover:bg-ink-600"
             >
-              @{{ gif.uploader_username }}
+              #{{ tag }}
             </RouterLink>
-          </span>
-          <span>{{ formatDate(gif.created_at) }}</span>
-          <span>👁 {{ gif.view_count }} views</span>
-          <span>♥ {{ likeLabel }}</span>
-        </div>
-      </div>
+          </div>
 
-      <!-- Embed code generator -->
-      <div class="mt-8 rounded-2xl border border-ink-700 bg-ink-800 p-5">
-        <h2 class="mb-3 font-semibold text-white">Embed this GIF</h2>
-
-        <div class="flex gap-1 border-b border-ink-700">
-          <button
-            v-for="tab in tabs"
-            :key="tab.key"
-            type="button"
-            class="px-4 py-2 text-sm font-medium transition"
-            :class="
-              activeTab === tab.key
-                ? 'border-b-2 border-giphy-purple text-white'
-                : 'text-gray-400 hover:text-white'
-            "
-            @click="activeTab = tab.key"
+          <!-- Meta line -->
+          <div
+            class="mt-5 flex flex-wrap items-center gap-x-6 gap-y-1 text-sm text-gray-400"
           >
-            {{ tab.label }}
-          </button>
+            <span>
+              by
+              <RouterLink
+                :to="`/profile/${gif.uploader_username}`"
+                class="font-semibold text-giphy-green hover:underline"
+              >
+                @{{ gif.uploader_username }}
+              </RouterLink>
+            </span>
+            <span>{{ formatDate(gif.created_at) }}</span>
+            <span>👁 {{ gif.view_count }} views</span>
+            <span>♥ {{ likeLabel }}</span>
+          </div>
+
+          <!-- Info panel (toggled from the sidebar) -->
+          <div
+            v-if="showInfo"
+            class="mt-5 grid grid-cols-2 gap-3 rounded-2xl border border-ink-700 bg-ink-800 p-5 text-sm"
+          >
+            <div>
+              <p class="text-gray-500">GIF ID</p>
+              <p class="font-semibold text-white">#{{ gif.id }}</p>
+            </div>
+            <div>
+              <p class="text-gray-500">Category</p>
+              <p class="font-semibold text-white">
+                {{ gif.category ?? 'Uncategorized' }}
+              </p>
+            </div>
+            <div>
+              <p class="text-gray-500">Uploaded</p>
+              <p class="font-semibold text-white">
+                {{ formatDate(gif.created_at) }}
+              </p>
+            </div>
+            <div>
+              <p class="text-gray-500">Views</p>
+              <p class="font-semibold text-white">{{ gif.view_count }}</p>
+            </div>
+          </div>
+
+          <!-- Embed code generator (hidden until the Embed button is clicked) -->
+          <div
+            v-if="showEmbed"
+            class="mt-8 rounded-2xl border border-ink-700 bg-ink-800 p-5"
+          >
+            <div class="mb-3 flex items-center justify-between">
+              <h2 class="font-semibold text-white">Embed this GIF</h2>
+              <button
+                type="button"
+                class="text-gray-500 transition hover:text-white"
+                title="Close"
+                @click="showEmbed = false"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div class="flex gap-1 border-b border-ink-700">
+              <button
+                v-for="tab in tabs"
+                :key="tab.key"
+                type="button"
+                class="px-4 py-2 text-sm font-medium transition"
+                :class="
+                  activeTab === tab.key
+                    ? 'border-b-2 border-giphy-purple text-white'
+                    : 'text-gray-400 hover:text-white'
+                "
+                @click="activeTab = tab.key"
+              >
+                {{ tab.label }}
+              </button>
+            </div>
+
+            <div class="mt-4 flex items-stretch gap-2">
+              <code
+                class="flex-1 overflow-x-auto rounded-lg bg-ink-900 px-4 py-3 text-sm text-giphy-green"
+              >
+                {{ embedCode }}
+              </code>
+              <button
+                type="button"
+                class="shrink-0 rounded-lg bg-gradient-to-r from-giphy-purple to-giphy-pink px-4 text-sm font-semibold text-white transition hover:opacity-90"
+                @click="copyCode"
+              >
+                {{ copied ? 'Copied!' : 'Copy' }}
+              </button>
+            </div>
+          </div>
+
+          <!-- Related GIFs -->
+          <section v-if="relatedGifs.length" class="mt-10">
+            <h2 class="mb-4 text-xl font-bold text-white">Related GIFs</h2>
+            <div class="grid grid-cols-2 gap-4 sm:grid-cols-3">
+              <RouterLink
+                v-for="rel in relatedGifs"
+                :key="rel.id"
+                :to="`/gif/${rel.id}`"
+                class="group block overflow-hidden rounded-xl border border-ink-700 bg-ink-800 card-hover hover:border-giphy-purple/60"
+              >
+                <img
+                  :src="rel.url"
+                  :alt="rel.title"
+                  loading="lazy"
+                  class="aspect-square w-full bg-ink-900 object-cover transition duration-300 group-hover:scale-[1.03]"
+                />
+                <p class="truncate p-2 text-sm text-gray-300">{{ rel.title }}</p>
+              </RouterLink>
+            </div>
+          </section>
         </div>
 
-        <div class="mt-4 flex items-stretch gap-2">
-          <code
-            class="flex-1 overflow-x-auto rounded-lg bg-ink-900 px-4 py-3 text-sm text-giphy-green"
+        <!-- ============ RIGHT: action sidebar ============ -->
+        <aside class="h-max space-y-4 lg:sticky lg:top-20">
+          <!-- Uploader card -->
+          <RouterLink
+            :to="`/profile/${gif.uploader_username}`"
+            class="flex items-center gap-3 rounded-2xl border border-ink-700 bg-ink-800 p-4 transition hover:border-giphy-green/50"
           >
-            {{ embedCode }}
-          </code>
-          <button
-            type="button"
-            class="shrink-0 rounded-lg bg-gradient-to-r from-giphy-purple to-giphy-pink px-4 text-sm font-semibold text-white transition hover:opacity-90"
-            @click="copyCode"
-          >
-            {{ copied ? 'Copied!' : 'Copy' }}
-          </button>
-        </div>
+            <span
+              class="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-giphy-purple to-giphy-pink text-lg font-bold text-white"
+            >
+              {{ gif.uploader_username.charAt(0).toUpperCase() }}
+            </span>
+            <span class="min-w-0">
+              <span class="block truncate font-semibold text-white">
+                @{{ gif.uploader_username }}
+              </span>
+              <span class="block text-xs text-gray-400">Creator</span>
+            </span>
+          </RouterLink>
+
+          <!-- Views stat -->
+          <div class="rounded-2xl border border-ink-700 bg-ink-800 p-4 text-center">
+            <p class="text-2xl font-extrabold text-white">
+              {{ gif.view_count.toLocaleString() }}
+            </p>
+            <p class="text-xs uppercase tracking-wide text-gray-500">Views</p>
+          </div>
+
+          <!-- Action buttons -->
+          <div class="space-y-2">
+            <button
+              type="button"
+              class="detail-action"
+              :class="
+                likedByMe
+                  ? 'border-giphy-pink bg-giphy-pink/10 text-giphy-pink'
+                  : 'border-ink-700 text-gray-200 hover:border-giphy-pink hover:text-giphy-pink'
+              "
+              @click="handleLike"
+            >
+              <span>{{ likedByMe ? '♥' : '♡' }} {{ likeCount }}</span>
+              <span class="text-sm text-gray-400">Favorite</span>
+            </button>
+
+            <button
+              type="button"
+              class="detail-action"
+              :class="
+                saved
+                  ? 'border-giphy-blue bg-giphy-blue/10 text-giphy-blue'
+                  : 'border-ink-700 text-gray-200 hover:border-giphy-blue hover:text-giphy-blue'
+              "
+              @click="handleSave"
+            >
+              <span>🔖</span>
+              <span>{{ saved ? 'Saved' : 'Save' }}</span>
+            </button>
+
+            <button
+              type="button"
+              class="detail-action border-ink-700 text-gray-200 hover:border-giphy-green hover:text-giphy-green"
+              :title="shareCopied ? 'Link copied!' : 'Copy link to this GIF'"
+              @click="shareGif"
+            >
+              <span>🔗</span>
+              <span>{{ shareCopied ? 'Copied!' : 'Copy Link' }}</span>
+            </button>
+
+            <a
+              :href="gif.url"
+              :download="downloadName"
+              class="detail-action border-ink-700 text-gray-200 hover:border-giphy-purple hover:text-giphy-purple"
+            >
+              <span>⬇</span>
+              <span>Download</span>
+            </a>
+
+            <button
+              type="button"
+              class="detail-action text-gray-200 hover:border-giphy-purple hover:text-giphy-purple"
+              :class="
+                showEmbed ? 'border-giphy-purple text-giphy-purple' : 'border-ink-700'
+              "
+              @click="showEmbed = !showEmbed"
+            >
+              <span>&lt;/&gt;</span>
+              <span>Embed</span>
+            </button>
+
+            <button
+              type="button"
+              class="detail-action border-ink-700 text-gray-200 hover:border-white hover:text-white"
+              @click="showInfo = !showInfo"
+            >
+              <span>ⓘ</span>
+              <span>Info</span>
+            </button>
+
+            <button
+              v-if="canReport"
+              type="button"
+              class="detail-action border-ink-700 text-gray-400 hover:border-giphy-pink hover:text-giphy-pink"
+              @click="openReport"
+            >
+              <span>⚐</span>
+              <span>Report</span>
+            </button>
+          </div>
+        </aside>
       </div>
     </template>
 
@@ -354,3 +562,9 @@ async function submitReport() {
     </div>
   </div>
 </template>
+
+<style scoped>
+.detail-action {
+  @apply flex w-full items-center justify-between gap-2 rounded-xl border px-4 py-3 font-semibold transition;
+}
+</style>

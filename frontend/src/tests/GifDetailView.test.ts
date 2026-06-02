@@ -7,7 +7,10 @@ import GifDetailView from '@/views/GifDetailView.vue'
 import {
   fetchGif,
   fetchLikes,
+  fetchRelated,
+  fetchSavedStatus,
   toggleLike,
+  toggleSave,
   type Gif,
   type LikeStatus,
   type ToggleLikeResult,
@@ -24,7 +27,10 @@ vi.mock('@/api/client', async () => {
     ...actual,
     fetchGif: vi.fn(),
     fetchLikes: vi.fn(),
+    fetchRelated: vi.fn(),
+    fetchSavedStatus: vi.fn(),
     toggleLike: vi.fn(),
+    toggleSave: vi.fn(),
     reportGif: vi.fn(),
   }
 })
@@ -77,12 +83,15 @@ describe('GifDetailView', () => {
   beforeEach(() => {
     vi.mocked(fetchGif).mockReset()
     vi.mocked(fetchLikes).mockReset()
+    vi.mocked(fetchRelated).mockReset()
     vi.mocked(toggleLike).mockReset()
     vi.mocked(fetchGif).mockResolvedValue(GIF)
     vi.mocked(fetchLikes).mockResolvedValue({
       like_count: 7,
       liked_by_me: false,
     } satisfies LikeStatus)
+    vi.mocked(fetchRelated).mockResolvedValue([])
+    vi.mocked(fetchSavedStatus).mockResolvedValue({ saved: false })
 
     // Log in as a different user (so report controls render etc.).
     const auth = useAuth()
@@ -133,6 +142,15 @@ describe('GifDetailView', () => {
 
   it('copies the embed code when the copy button is clicked', async () => {
     const { wrapper } = await mountDetail()
+
+    // Embed panel is collapsed by default — open it from the sidebar first.
+    const embedBtn = wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Embed'))
+    expect(embedBtn).toBeTruthy()
+    await embedBtn!.trigger('click')
+    await flushPromises()
+
     const copyBtn = wrapper
       .findAll('button')
       .find((b) => b.text().trim() === 'Copy')
@@ -147,5 +165,49 @@ describe('GifDetailView', () => {
     expect(copied).toContain('/uploads/dancing.gif')
     expect(copied).toContain('Dancing Cat')
     expect(copyBtn!.text()).toContain('Copied!')
+  })
+
+  it('renders the Related GIFs section with thumbnails linking to detail', async () => {
+    vi.mocked(fetchRelated).mockResolvedValue([
+      {
+        id: 11,
+        user_id: 9,
+        title: 'Related One',
+        description: null,
+        tags: ['cat'],
+        file_path: 'r1.gif',
+        url: '/uploads/r1.gif',
+        view_count: 0,
+        like_count: 0,
+        created_at: '2024-02-01T00:00:00Z',
+        uploader_username: 'alice',
+      },
+    ])
+
+    const { wrapper } = await mountDetail()
+    expect(fetchRelated).toHaveBeenCalledWith('5')
+    expect(wrapper.text()).toContain('Related GIFs')
+    expect(wrapper.text()).toContain('Related One')
+    const link = wrapper
+      .findAll('a')
+      .find((a) => a.attributes('href') === '/gif/11')
+    expect(link).toBeTruthy()
+  })
+
+  it('saves the GIF when the save button is clicked', async () => {
+    vi.mocked(toggleSave).mockResolvedValue({ saved: true })
+
+    const { wrapper } = await mountDetail()
+    const saveBtn = wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Save'))
+    expect(saveBtn).toBeTruthy()
+    expect(saveBtn!.text()).toContain('Save')
+
+    await saveBtn!.trigger('click')
+    await flushPromises()
+
+    expect(toggleSave).toHaveBeenCalledWith('5')
+    expect(saveBtn!.text()).toContain('Saved')
   })
 })

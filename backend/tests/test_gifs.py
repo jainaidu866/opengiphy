@@ -187,3 +187,114 @@ def test_delete_gif_without_auth(client):
 
     response = client.delete(f"/gifs/{gif_id}")
     assert response.status_code == 401
+
+
+def test_related_returns_tag_sharing_gifs_excluding_self(client):
+    headers = auth_headers(client)
+    base = upload_gif(client, headers, title="Base", tags='["cat", "funny"]').json()
+    shares = upload_gif(client, headers, title="Shares", tags='["cat", "cute"]').json()
+    upload_gif(client, headers, title="Unrelated", tags='["dog"]')
+
+    resp = client.get(f"/gifs/{base['id']}/related")
+    assert resp.status_code == 200
+    ids = [g["id"] for g in resp.json()]
+    # Includes the tag-sharing GIF, excludes self and the unrelated one.
+    assert shares["id"] in ids
+    assert base["id"] not in ids
+    titles = [g["title"] for g in resp.json()]
+    assert "Unrelated" not in titles
+
+
+def test_related_orders_by_shared_tag_count(client):
+    headers = auth_headers(client)
+    base = upload_gif(
+        client, headers, title="Base", tags='["cat", "funny", "cute"]'
+    ).json()
+    # two shared tags
+    two = upload_gif(client, headers, title="Two", tags='["cat", "funny"]').json()
+    # one shared tag
+    one = upload_gif(client, headers, title="One", tags='["cat", "sports"]').json()
+
+    resp = client.get(f"/gifs/{base['id']}/related")
+    ids = [g["id"] for g in resp.json()]
+    assert ids[0] == two["id"]
+    assert ids[1] == one["id"]
+
+
+def test_related_respects_limit(client):
+    headers = auth_headers(client)
+    base = upload_gif(client, headers, title="Base", tags='["cat"]').json()
+    for i in range(4):
+        upload_gif(client, headers, title=f"rel-{i}", tags='["cat"]')
+
+    resp = client.get(f"/gifs/{base['id']}/related?limit=2")
+    assert resp.status_code == 200
+    assert len(resp.json()) == 2
+
+
+def test_related_empty_when_no_tags(client):
+    headers = auth_headers(client)
+    base = upload_gif(client, headers, title="NoTags", tags="[]").json()
+    upload_gif(client, headers, title="Other", tags='["cat"]')
+
+    resp = client.get(f"/gifs/{base['id']}/related")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_related_404_for_missing_gif(client):
+    resp = client.get("/gifs/99999/related")
+    assert resp.status_code == 404
+
+
+def test_upload_with_valid_category(client):
+    headers = auth_headers(client)
+    resp = client.post(
+        "/gifs/upload",
+        headers=headers,
+        data={"title": "Cat", "tags": "[]", "category": "animals"},
+        files={"file": ("test.gif", GIF_BYTES, "image/gif")},
+    )
+    assert resp.status_code == 201
+    assert resp.json()["category"] == "animals"
+
+
+def test_upload_with_invalid_category_rejected(client):
+    headers = auth_headers(client)
+    resp = client.post(
+        "/gifs/upload",
+        headers=headers,
+        data={"title": "Cat", "tags": "[]", "category": "not-a-category"},
+        files={"file": ("test.gif", GIF_BYTES, "image/gif")},
+    )
+    assert resp.status_code == 400
+
+
+def test_upload_without_category_allowed(client):
+    headers = auth_headers(client)
+    resp = upload_gif(client, headers)
+    assert resp.status_code == 201
+    assert resp.json()["category"] is None
+
+
+def test_list_filtered_by_category(client):
+    headers = auth_headers(client)
+    client.post(
+        "/gifs/upload",
+        headers=headers,
+        data={"title": "Sporty", "tags": "[]", "category": "sports"},
+        files={"file": ("test.gif", GIF_BYTES, "image/gif")},
+    )
+    client.post(
+        "/gifs/upload",
+        headers=headers,
+        data={"title": "Foody", "tags": "[]", "category": "food"},
+        files={"file": ("test.gif", GIF_BYTES, "image/gif")},
+    )
+
+    sports = client.get("/gifs/?category=sports")
+    assert sports.status_code == 200
+    assert [g["title"] for g in sports.json()] == ["Sporty"]
+
+    food = client.get("/gifs/?category=food")
+    assert [g["title"] for g in food.json()] == ["Foody"]
